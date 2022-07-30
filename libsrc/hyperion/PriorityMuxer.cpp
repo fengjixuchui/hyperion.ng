@@ -22,15 +22,15 @@ const int PriorityMuxer::ENDLESS = -1;
 
 PriorityMuxer::PriorityMuxer(int ledCount, QObject * parent)
 	: QObject(parent)
-	, _log(nullptr)
-	, _currentPriority(PriorityMuxer::LOWEST_PRIORITY)
-	, _previousPriority(_currentPriority)
-	, _manualSelectedPriority(MANUAL_SELECTED_PRIORITY)
-	, _prevVisComp (hyperion::Components::COMP_COLOR)
-	, _sourceAutoSelectEnabled(true)
-	, _updateTimer(new QTimer(this))
-	, _timer(new QTimer(this))
-	, _blockTimer(new QTimer(this))
+	  , _log(nullptr)
+	  , _currentPriority(PriorityMuxer::LOWEST_PRIORITY)
+	  , _previousPriority(_currentPriority)
+	  , _manualSelectedPriority(MANUAL_SELECTED_PRIORITY)
+	  , _prevVisComp (hyperion::Components::COMP_COLOR)
+	  , _sourceAutoSelectEnabled(true)
+	  , _updateTimer(new QTimer(this))
+	  , _timer(new QTimer(this))
+	  , _blockTimer(new QTimer(this))
 {
 	QString subComponent = parent->property("instance").toString();
 	_log= Logger::getInstance("MUXER", subComponent);
@@ -44,6 +44,7 @@ PriorityMuxer::PriorityMuxer(int ledCount, QObject * parent)
 	_lowestPriorityInfo.componentId    = hyperion::COMP_COLOR;
 	_lowestPriorityInfo.origin         = "System";
 	_lowestPriorityInfo.owner          = "";
+	_lowestPriorityInfo.smooth_cfg	   = 0;
 
 	_activeInputs[PriorityMuxer::LOWEST_PRIORITY] = _lowestPriorityInfo;
 
@@ -214,6 +215,20 @@ bool PriorityMuxer::setInput(int priority, const std::vector<ColorRgb>& ledColor
 		active = false;
 		activeChange = true;
 	}
+
+	if (input.componentId == hyperion::COMP_COLOR)
+	{
+		activeChange = true;
+		if (!input.ledColors.empty() && !ledColors.empty())
+		{
+			//Only issue priority update, if first LED change as value in update is representing first LED only
+			if (input.ledColors.front() == ledColors.front())
+			{
+				activeChange = false;
+			}
+		}
+	}
+
 	// update input
 	input.timeoutTime_ms = timeout_ms;
 	input.ledColors      = ledColors;
@@ -331,6 +346,7 @@ void PriorityMuxer::updatePriorities()
 
 	_activeInputs.contains(0) ? newPriority = 0 : newPriority = PriorityMuxer::LOWEST_PRIORITY;
 
+	bool timeTrigger {false};
 	QMutableMapIterator<int, PriorityMuxer::InputInfo> i(_activeInputs);
 	while (i.hasNext()) {
 		i.next();
@@ -372,10 +388,15 @@ void PriorityMuxer::updatePriorities()
 					   )
 					 )
 				{
-					emit signalTimeTrigger(); // as signal to prevent Threading issues
+					timeTrigger = true;
 				}
 			}
 		}
+	}
+
+	if (timeTrigger)
+	{
+		emit signalTimeTrigger(); // signal to prevent Threading issues
 	}
 
 	// evaluate, if manual selected priority is still available

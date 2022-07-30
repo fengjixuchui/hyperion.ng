@@ -59,7 +59,6 @@ jobs:
         run: |
           mkdir -p ${{ matrix.dockerImage }}
           mv deploy/*.tar.gz ${{ matrix.dockerImage }}
-        if: matrix.dockerImage != 'aarch64'
 
       # Upload artifacts
       - name: Upload artifacts
@@ -67,7 +66,6 @@ jobs:
         with:
           name: ${{ matrix.dockerImage }}
           path: ${{ matrix.dockerImage }}
-        if: matrix.dockerImage != 'aarch64'
 
 ######################
 ###### macOS #########
@@ -139,7 +137,7 @@ jobs:
           echo -n "+PR${{ github.event.pull_request.number }}" >> .version
 
       - name: Cache Qt
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         id: cache-qt-windows
         with:
           path: ${{ runner.workspace }}/Qt
@@ -154,7 +152,7 @@ jobs:
           cached: ${{ steps.cache-qt-windows.outputs.cache-hit }}
 
       - name: Cache Chocolatey downloads
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: C:\Users\runneradmin\AppData\Local\Temp\chocolatey
           key: ${{ runner.os }}-chocolatey

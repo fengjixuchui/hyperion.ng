@@ -88,9 +88,9 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v3.1.0
+        uses: crazy-max/ghaction-import-gpg@v5.0.0
         with:
-          gpg-private-key: ${{ secrets.APT_GPG }}
+          gpg_private_key: ${{ secrets.APT_GPG }}
 
       - name: Install reprepro
         run: sudo apt -y install reprepro
@@ -107,7 +107,7 @@ jobs:
           reprepro -Vb apt export
 
       - name: Download artifacts
-        uses: actions/download-artifact@v2.0.10
+        uses: actions/download-artifact@v3.0.0
 
       - name: Include artifacts into the package source
         run: |
@@ -120,7 +120,7 @@ jobs:
           done
 
       - name: Upload packages to APT server (DRAFT)
-        uses: SamKirkland/FTP-Deploy-Action@4.1.0
+        uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
           server: apt.hyperion-project.org
           username: ${{ secrets.APT_USER }}
