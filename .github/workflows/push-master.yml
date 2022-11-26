@@ -33,7 +33,7 @@ jobs:
             platform: amlogic
 
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v3
         with:
           submodules: true
 
@@ -50,7 +50,7 @@ jobs:
       # Upload artifacts (only on tagged commit)
       - name: Upload artifacts
         if: startsWith(github.event.ref, 'refs/tags')
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           path: deploy/Hyperion-*
 
@@ -62,7 +62,7 @@ jobs:
     name: macOS
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v3
         with:
           submodules: true
 
@@ -81,7 +81,7 @@ jobs:
       # Upload artifacts (only on tagged commit)
       - name: Upload artifacts
         if: startsWith(github.event.ref, 'refs/tags')
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           path: build/Hyperion-*
 
@@ -97,24 +97,18 @@ jobs:
       QT_VERSION: 5.15.2
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
         with:
           submodules: true
 
-      - name: Cache Qt
-        uses: actions/cache@v3
-        id: cache-qt-windows
-        with:
-          path: ${{ runner.workspace }}/Qt
-          key: ${{ runner.os }}-Qt.${{ env.QT_VERSION }}
-
       - name: Install Qt
-        uses: jurplel/install-qt-action@v2
+        uses: jurplel/install-qt-action@v3
         with:
-          version: ${{ env.QT_VERSION }}
+          version: ${{env.QT_VERSION}}
           target: 'desktop'
           arch: 'win64_msvc2019_64'
-          cached: ${{ steps.cache-qt-windows.outputs.cache-hit }}
+          cache: 'true'
+          cache-key-prefix: 'cache-qt-windows'
 
       - name: Cache Chocolatey downloads
         uses: actions/cache@v3
@@ -146,7 +140,7 @@ jobs:
       # Upload artifacts (only on tagged commit)
       - name: Upload artifacts
         if: startsWith(github.event.ref, 'refs/tags')
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           path: build/Hyperion-*
           retention-days: 1
@@ -162,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       # Generate environment variables
       - name: Generate environment variables from .version and tag
@@ -172,7 +166,7 @@ jobs:
 
       # Download artifacts from previous build process
       - name: Download artifacts
-        uses: actions/download-artifact@v3.0.0
+        uses: actions/download-artifact@v3.0.1
         with:
           path: artifacts
 
@@ -192,7 +186,8 @@ jobs:
 ##########################
 
   apt_build:
-    name: APT Build
+    name: APT Build GitHub Releases
+    if: startsWith(github.event.ref, 'refs/tags')
     needs: [Linux, macOS, windows]
     uses: ./.github/workflows/apt.yml
     secrets:

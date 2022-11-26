@@ -889,7 +889,11 @@ function createTableRow(list, head, align) {
     if (align)
       el.style.verticalAlign = "middle";
 
-    el.innerHTML = list[i];
+    var purifyConfig = {
+            ADD_TAGS: ['button'],
+            ADD_ATTR: ['onclick']
+    };
+    el.innerHTML = DOMPurify.sanitize(list[i], purifyConfig);
     row.appendChild(el);
   }
   return row;
@@ -1310,7 +1314,7 @@ function isValidIPv6(value) {
 
 function isValidHostname(value) {
   if (value.match(
-    '^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])(\.([a-zA-Z0-9]|[_a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]))*$'
+    '^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])(.([a-zA-Z0-9]|[_a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]))*$'	//lgtm [js/redos]
   ))
     return true;
   else
@@ -1319,7 +1323,7 @@ function isValidHostname(value) {
 
 function isValidServicename(value) {
   if (value.match(
-    '^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9 \-]{0,61}[a-zA-Z0-9])(\.([a-zA-Z0-9]|[_a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]))*$'
+    '^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9 -]{0,61}[a-zA-Z0-9])(.([a-zA-Z0-9]|[_a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]))*$'	//lgtm [js/redos]
   ))
     return true;
   else
