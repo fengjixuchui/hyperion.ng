@@ -4,21 +4,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/hyperion-project/hyperion.ng/compare/2.0.13...HEAD)
+## [Unreleased](https://github.com/hyperion-project/hyperion.ng/compare/2.0.14...HEAD)
 
 ### Breaking
 
 ### Added
 
-- Added saturation gain and brightness/value gain as new color processing settings
+- Allow to Disable / Enable all instances (#970) by 
+	- Suspend/Resume support for Linux and Windows (#1493,#1282, #978).
+	Suspend/Resume/Restart is supported via API, UI, Systray and hyperion-remote
+	- Idle scenario via Screen Locking (Linux/Windows), Screensaver invokation (Linux), hyperion-remote or API
+	In Idle, all instances, components will be disabled besides the output processing (LED-Devices, smoothing).
+	The current priorities will be cleared and the background effect per instance will be executed, if enabled.
+	- Commands toogleSuspend and toggleIdle allow to flip between modes, e.g. might be used to trigger modes by a remote
+- Add instance# in API response (#1504)
 
 ### Changed
 
 ### Fixed
 
-- V4L2-Grabber: Fixed a SEGFAULT in init() when compiled on Ubuntu Server 22.04
+- Restart correctly, if running as service (#1368)
+- Hue-Wizard: In case auto discovery failed, port 80 was not used as default (#1544)
+- Send only one reply per Start Instance request (#1551)
+- Add instance# in JSON-API replies (aligning to Add instance in websocket response to a subscription #1504 behaviour)
+- hyperion-remote: Extracting reply for a configGet request correctly (#1555) 
+
+### Technical
+- Add CodeQL for GitHub code scanning
+- Update to Protocol Buffers 3.21.12
+- cmake support of libcec without version in lib-name
+- Qt6 alignments
+- Refactor for Python 3.11 deprecated functions
 
 ## Removed
+
+## [2.0.14](https://github.com/hyperion-project/hyperion.ng/releases/tag/2.0.14) - 2022-11
+
+Hyperion's November release is not too big, but provides you with the latest updates and fixes. Many thanks to all contributors providing code (xkns, drzony) or translations.
+
+### Added
+
+- New color processing settings: Saturation gain and brightness/value gain. They allow compensating washed out HDR colors on LEDs (#822, #1092, #1142 partially).
+- New languages: Catalan & Greek
+- USB Capture: Support 3D processing for MJPEG
+- Forwarding: Support flat-/proto buffer input
+- Adalight: HyperSerial support (High speed protocol by awawa-dev) and support device feedback, show statistics provided by HyperSerial (modified by LordGrey) sketch
+- AtmoOrb: Firmware image for Particle/Photon
+
+### Changed
+
+- Serial LED-devices: Ability to select standard Baud rates, as well as defining a custom one
+- LED-devices: Do not switch-off device, if background effect is configured and will kick-in soon
+
+### Fixed
+
+- USB-Grabber: Fixed a SEGFAULT when compiled on Ubuntu Server 22.04
+- USB Grabber: Fixed memory leak when transforming MJPEG
+- ImageResampler: Apply only half crop for 3D to maintain crop ratio
+- Remote Control: Update Color calibration values when calibration settings were saved
+- Fixed Smoothing got out of sync when saving configuration
+- Smoothing: Removed "outputrate" as duplicate to update frequency
+- Queue LED-device on/off signals
+- UI: Correctly lookup current Instance Name
+- Fixed AtmoOrb firmware image
 
 ## [2.0.13](https://github.com/hyperion-project/hyperion.ng/releases/tag/2.0.13) - 2022-05-22
 ### Added

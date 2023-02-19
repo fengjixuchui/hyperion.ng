@@ -61,6 +61,12 @@
 #endif
 
 #include <hyperion/GrabberWrapper.h>
+#ifdef ENABLE_AUDIO
+	#include <grabber/AudioWrapper.h>
+#else
+	typedef QObject AudioWrapper;
+#endif
+
 
 #include <utils/Logger.h>
 #include <utils/VideoMode.h>
@@ -68,6 +74,8 @@
 // settings management
 #include <utils/settings.h>
 #include <utils/Components.h>
+
+#include "SuspendHandler.h"
 
 class HyperionIManager;
 class SysTray;
@@ -101,6 +109,11 @@ public:
 	/// @brief Get webserver pointer (systray)
 	///
 	WebServer *getWebServerInstance() { return _webserver; }
+
+	///
+	/// @brief Get suspense handler pointer
+	///
+	SuspendHandler* getSuspendHandlerInstance() { return _suspendHandler; }
 
 	///
 	/// @brief Get the current videoMode
@@ -174,6 +187,7 @@ private:
 	void createGrabberQt(const QJsonObject & grabberConfig);
 	void createCecHandler();
 	void createGrabberDx(const QJsonObject & grabberConfig);
+	void createGrabberAudio(const QJsonObject & grabberConfig);
 
 	Logger*                    _log;
 	HyperionIManager*          _instanceManager;
@@ -197,11 +211,13 @@ private:
 	OsxWrapper*                _osxGrabber;
 	QtWrapper*                 _qtGrabber;
 	DirectXWrapper*            _dxGrabber;
+	AudioWrapper*			   _audioGrabber;
 	SSDPHandler*               _ssdp;
-
 	#ifdef ENABLE_CEC
 	CECHandler*                _cecHandler;
 	#endif
+	SuspendHandler*            _suspendHandler;
+
 	#if defined(ENABLE_FLATBUF_SERVER)
 	FlatBufferServer*          _flatBufferServer;
 	#endif

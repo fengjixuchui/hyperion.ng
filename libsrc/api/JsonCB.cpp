@@ -148,7 +148,6 @@ void JsonCB::resetSubscriptions()
 void JsonCB::setSubscriptionsTo(Hyperion* hyperion)
 {
 	assert(hyperion);
-	//std::cout << "JsonCB::setSubscriptions for instance [" << static_cast<int>(hyperion->getInstanceIndex()) << "] " << std::endl;
 
 	// get current subs
 	QStringList currSubs(getSubscribedCommands());
@@ -171,14 +170,13 @@ void JsonCB::setSubscriptionsTo(Hyperion* hyperion)
 void JsonCB::doCallback(const QString& cmd, const QVariant& data)
 {
 	QJsonObject obj;
+	obj["instance"] = _hyperion->getInstanceIndex();
 	obj["command"] = cmd;
 
 	if (data.userType() == QMetaType::QJsonArray)
 		obj["data"] = data.toJsonArray();
 	else
 		obj["data"] = data.toJsonObject();
-
-	//std::cout << "JsonCB::doCallback | [" << static_cast<int>(_hyperion->getInstanceIndex()) << "] Send: [" << QJsonDocument(obj).toJson(QJsonDocument::Compact).toStdString() << "]" << std::endl;
 
 	emit newCallback(obj);
 }
@@ -397,7 +395,6 @@ void JsonCB::handleInstanceChange()
 		QJsonObject obj;
 		obj.insert("friendly_name", entry["friendly_name"].toString());
 		obj.insert("instance", entry["instance"].toInt());
-		//obj.insert("last_use", entry["last_use"].toString());
 		obj.insert("running", entry["running"].toBool());
 		arr.append(obj);
 	}

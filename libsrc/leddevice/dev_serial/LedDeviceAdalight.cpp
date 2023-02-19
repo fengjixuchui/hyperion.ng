@@ -94,10 +94,10 @@ void LedDeviceAdalight::prepareHeader()
 		break;
 
 	case Adalight::AWA:
-		_bufferLength += 7;
-		[[clang::fallthrough]];
+		_bufferLength += 8;
+		[[fallthrough]];
 	case Adalight::ADA:
-		[[clang::fallthrough]];
+		[[fallthrough]];
 	default:
 		totalLedCount -= 1;
 		_ledBuffer.resize(static_cast<size_t>(_bufferLength), 0x00);
@@ -119,7 +119,7 @@ void LedDeviceAdalight::prepareHeader()
 	qToBigEndian<quint16>(static_cast<quint16>(totalLedCount), &_ledBuffer[3]);
 	_ledBuffer[5] = _ledBuffer[3] ^ _ledBuffer[4] ^ 0x55; // Checksum
 
-	Debug( _log, "Adalight header for %d leds: %c%c%c 0x%02x 0x%02x 0x%02x", _ledCount,
+	Debug( _log, "Adalight header for %d leds (size: %d): %c%c%c 0x%02x 0x%02x 0x%02x", _ledCount, _ledBuffer.size(),
 		   _ledBuffer[0], _ledBuffer[1], _ledBuffer[2], _ledBuffer[3], _ledBuffer[4], _ledBuffer[5] );
 }
 
@@ -162,14 +162,20 @@ int LedDeviceAdalight::write(const std::vector<ColorRgb> & ledValues)
 		{
 			whiteChannelExtension(writer);
 
-			uint16_t fletcher1 = 0, fletcher2 = 0;
+			uint16_t fletcher1 = 0;
+			uint16_t fletcher2 = 0;
+			uint16_t fletcherExt = 0;
+			uint8_t position = 0;
+
 			while (hasher < writer)
 			{
+				fletcherExt = (fletcherExt + (*(hasher) ^ (position++))) % 255;
 				fletcher1 = (fletcher1 + *(hasher++)) % 255;
 				fletcher2 = (fletcher2 + fletcher1) % 255;
 			}
 			*(writer++) = static_cast<uint8_t>(fletcher1);
 			*(writer++) = static_cast<uint8_t>(fletcher2);
+			*(writer++) = static_cast<uint8_t>((fletcherExt != 0x41) ? fletcherExt : 0xaa);
 		}
 		_bufferLength = writer - _ledBuffer.data();
 	}
@@ -177,6 +183,31 @@ int LedDeviceAdalight::write(const std::vector<ColorRgb> & ledValues)
 	int rc = writeBytes(_bufferLength, _ledBuffer.data());
 
 	return rc;
+}
+
+void LedDeviceAdalight::readFeedback()
+{
+	if (_streamProtocol == Adalight::AWA)
+	{
+		bool continuousLines {true};
+		while ( _rs232Port.canReadLine() )
+		{
+			QByteArray record = _rs232Port.readLine();
+			if (record.startsWith("FPS:"))
+			{
+				if (continuousLines)
+				{
+					continuousLines = false;
+				}
+				Debug(_log, "Statistics %s", record.trimmed().constData());
+			}
+			else
+			{
+				std::cout << record.toStdString() << std::flush;
+				continuousLines = true;
+			}
+		}
+	}
 }
 
 void LedDeviceAdalight::whiteChannelExtension(uint8_t*& writer)

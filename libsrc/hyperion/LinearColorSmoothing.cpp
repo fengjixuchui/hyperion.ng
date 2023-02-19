@@ -47,7 +47,6 @@ const char* SETTINGS_KEY_OUTPUT_DELAY = "updateDelay";
 
 const char* SETTINGS_KEY_DECAY = "decay";
 const char* SETTINGS_KEY_INTERPOLATION_RATE = "interpolationRate";
-const char* SETTINGS_KEY_OUTPUT_RATE = "outputRate";
 const char* SETTINGS_KEY_DITHERING = "dithering";
 
 const int64_t DEFAULT_SETTLINGTIME = 200;	// in ms
@@ -71,6 +70,7 @@ LinearColorSmoothing::LinearColorSmoothing(const QJsonDocument &config, Hyperion
 	  , _pause(false)
 	  , _currentConfigId(SmoothingConfigID::SYSTEM)
 	  , _enabled(false)
+	  , _enabledSystemCfg(false)
 	  , _smoothingType(SmoothingType::Linear)
 	  , tempValues(std::vector<uint64_t>(0, 0L))
 {
@@ -115,11 +115,12 @@ void LinearColorSmoothing::handleSettingsUpdate(settings::type type, const QJson
 		QJsonObject obj = config.object();
 
 		setEnable(obj["enable"].toBool(_enabled));
+		_enabledSystemCfg = _enabled;
 
-		SmoothingCfg cfg(false,
-						  static_cast<int64_t>(obj[SETTINGS_KEY_SETTLING_TIME].toInt(DEFAULT_SETTLINGTIME)),
-						  static_cast<int64_t>(MS_PER_MICRO / obj[SETTINGS_KEY_UPDATE_FREQUENCY].toDouble(DEFAULT_UPDATEFREQUENCY))
-						  );
+		int64_t settlingTime_ms = static_cast<int64_t>(obj[SETTINGS_KEY_SETTLING_TIME].toInt(DEFAULT_SETTLINGTIME));
+		int _updateInterval_ms =static_cast<int>(MS_PER_MICRO / obj[SETTINGS_KEY_UPDATE_FREQUENCY].toDouble(DEFAULT_UPDATEFREQUENCY));
+
+		SmoothingCfg cfg(false, settlingTime_ms, _updateInterval_ms);
 
 		const QString typeString = obj[SETTINGS_KEY_SMOOTHING_TYPE].toString();
 
@@ -133,7 +134,6 @@ void LinearColorSmoothing::handleSettingsUpdate(settings::type type, const QJson
 		cfg._pause = false;
 		cfg._outputDelay = static_cast<unsigned>(obj[SETTINGS_KEY_OUTPUT_DELAY].toInt(DEFAULT_OUTPUTDEPLAY));
 
-		cfg._outputRate = obj[SETTINGS_KEY_OUTPUT_RATE].toDouble(DEFAULT_UPDATEFREQUENCY);
 		cfg._interpolationRate = obj[SETTINGS_KEY_INTERPOLATION_RATE].toDouble(DEFAULT_UPDATEFREQUENCY);
 		cfg._dithering = obj[SETTINGS_KEY_DITHERING].toBool(false);
 		cfg._decay = obj[SETTINGS_KEY_DECAY].toDouble(1.0);
@@ -164,7 +164,10 @@ int LinearColorSmoothing::write(const std::vector<ColorRgb> &ledValues)
 		_previousValues = ledValues;
 		_previousInterpolationTime = micros();
 
-		_timer->start(_updateInterval);
+		if (!_pause)
+		{
+			_timer->start(_updateInterval);
+		}
 	}
 
 	return 0;
@@ -408,7 +411,6 @@ void LinearColorSmoothing::performDecay(const int64_t now) {
 
 		if(microsTillNextAction > SLEEP_RES_MICROS) {
 			const int64_t wait = std::min(microsTillNextAction - SLEEP_RES_MICROS, SLEEP_MAX_MICROS);
-			//usleep(wait);
 			std::this_thread::sleep_for(std::chrono::microseconds(wait));
 		}
 	}
@@ -513,6 +515,8 @@ void LinearColorSmoothing::clearRememberedFrames()
 
 void LinearColorSmoothing::queueColors(const std::vector<ColorRgb> &ledColors)
 {
+	assert (ledColors.size() > 0);
+
 	if (_outputDelay == 0)
 	{
 		// No output delay => immediate write
@@ -544,7 +548,6 @@ void LinearColorSmoothing::queueColors(const std::vector<ColorRgb> &ledColors)
 void LinearColorSmoothing::clearQueuedColors()
 {
 	_timer->stop();
-	//QMetaObject::invokeMethod(_timer, "stop", Qt::QueuedConnection);
 	_previousValues.clear();
 
 	_targetValues.clear();
@@ -562,13 +565,16 @@ void LinearColorSmoothing::componentStateChange(hyperion::Components component, 
 
 void LinearColorSmoothing::setEnable(bool enable)
 {
-	_enabled = enable;
-	if (!_enabled)
+	if ( _enabled != enable)
 	{
-		clearQueuedColors();
+		_enabled = enable;
+		if (!_enabled)
+		{
+			clearQueuedColors();
+		}
+		// update comp register
+		_hyperion->setNewComponentState(hyperion::COMP_SMOOTHING, enable);
 	}
-	// update comp register
-	_hyperion->setNewComponentState(hyperion::COMP_SMOOTHING, enable);
 }
 
 void LinearColorSmoothing::setPause(bool pause)
@@ -583,7 +589,6 @@ unsigned LinearColorSmoothing::addConfig(int settlingTime_ms, double ledUpdateFr
 		settlingTime_ms,
 		static_cast<int>(MS_PER_MICRO / ledUpdateFrequency_hz),
 		SmoothingType::Linear,
-		ledUpdateFrequency_hz,
 		ledUpdateFrequency_hz,
 		updateDelay
 	};
@@ -605,11 +610,10 @@ unsigned LinearColorSmoothing::updateConfig(int cfgID, int settlingTime_ms, doub
 			static_cast<int>(MS_PER_MICRO / ledUpdateFrequency_hz),
 			SmoothingType::Linear,
 			ledUpdateFrequency_hz,
-			ledUpdateFrequency_hz,
 			updateDelay
 		};
 		_cfgList[updatedCfgID] = cfg;
-		DebugIf(verbose && _enabled, _log,"%s", QSTRING_CSTR(getConfig(updatedCfgID)));
+		Debug(_log,"%s", QSTRING_CSTR(getConfig(updatedCfgID)));
 	}
 	else
 	{
@@ -631,8 +635,7 @@ bool LinearColorSmoothing::selectConfig(int cfgID, bool force)
 		_settlingTime = _cfgList[cfgID]._settlingTime;
 		_outputDelay = _cfgList[cfgID]._outputDelay;
 		_pause = _cfgList[cfgID]._pause;
-		_outputRate = _cfgList[cfgID]._outputRate;
-		_outputIntervalMicros = int64_t(1000000.0 / _outputRate); // 1s = 1e6 µs
+		_outputIntervalMicros = int64_t(1000000.0 / _updateInterval); // 1s = 1e6 µs
 		_interpolationRate = _cfgList[cfgID]._interpolationRate;
 		_interpolationIntervalMicros = int64_t(1000000.0 / _interpolationRate);
 		_dithering = _cfgList[cfgID]._dithering;
@@ -667,6 +670,19 @@ bool LinearColorSmoothing::selectConfig(int cfgID, bool force)
 		_interpolationCounter = 0;
 		_interpolationStatCounter = 0;
 
+		//Enable smoothing for effects with smoothing
+		if (cfgID >= SmoothingConfigID::EFFECT_DYNAMIC)
+		{
+			Debug(_log,"Run Effect with Smoothing enabled");
+			_enabledSystemCfg = _enabled;
+			setEnable(true);
+		}
+		else
+		{
+			// Restore enabled state after running an effect with smoothing
+			setEnable(_enabledSystemCfg);
+		}
+
 		if (_cfgList[cfgID]._updateInterval != _updateInterval)
 		{
 
@@ -674,7 +690,10 @@ bool LinearColorSmoothing::selectConfig(int cfgID, bool force)
 			_updateInterval = _cfgList[cfgID]._updateInterval;
 			if (this->enabled())
 			{
-				_timer->start(_updateInterval);
+				if (!_pause && !_targetValues.empty())
+				{
+					_timer->start(_updateInterval);
+				}
 			}
 		}
 		_currentConfigId = cfgID;
@@ -696,31 +715,36 @@ QString LinearColorSmoothing::getConfig(int cfgID)
 	{
 		SmoothingCfg cfg = _cfgList[cfgID];
 
-		configText = QString ("[%1] - type: %2, pause: %3, settlingTime: %4ms, interval: %5ms (%6Hz), delay: %7 frames")
-						 .arg(cfgID)
-						 .arg(SmoothingCfg::EnumToString(cfg._type),(cfg._pause) ? "true" : "false")
-						 .arg(cfg._settlingTime)
-						 .arg(cfg._updateInterval)
-						 .arg(int(MS_PER_MICRO/cfg._updateInterval))
-						 .arg(cfg._outputDelay);
+		configText = QString ("[%1] - Type: %2, Pause: %3")
+					 .arg(cfgID)
+					 .arg(SmoothingCfg::EnumToString(cfg._type),(cfg._pause) ? "true" : "false") ;
 
 		switch (cfg._type) {
-		case SmoothingType::Linear:
-			break;
-
 		case SmoothingType::Decay:
 		{
 			const double thalf = (1.0-std::pow(1.0/2, 1.0/_decay))*_settlingTime;
-			configText += QString (", outputRate %1Hz, interpolationRate: %2Hz, dithering: %3, decay: %4 -> halftime: %5ms")
-							  .arg(cfg._outputRate,0,'f',2)
-							  .arg(cfg._interpolationRate,0,'f',2)
-							  .arg((cfg._dithering) ? "true" : "false")
-							  .arg(cfg._decay,0,'f',2)
-							  .arg(thalf,0,'f',2);
+			configText += QString (", Interpolation rate: %1Hz, Dithering: %2, decay: %3 -> Halftime: %4ms")
+						  .arg(cfg._interpolationRate,0,'f',2)
+						  .arg((cfg._dithering) ? "true" : "false")
+						  .arg(cfg._decay,0,'f',2)
+						  .arg(thalf,0,'f',2);
+			[[fallthrough]];
+		}
+
+		case SmoothingType::Linear:
+		{
+			configText += QString (", Settling time: %1ms, Interval: %2ms (%3Hz)")
+						  .arg(cfg._settlingTime)
+						  .arg(cfg._updateInterval)
+						  .arg(int(MS_PER_MICRO/cfg._updateInterval));
 			break;
 		}
 		}
+
+		configText += QString (", delay: %1 frames")
+					  .arg(cfg._outputDelay);
 	}
+
 	return configText;
 }
 
@@ -732,19 +756,17 @@ LinearColorSmoothing::SmoothingCfg::SmoothingCfg() :
 {
 }
 
-LinearColorSmoothing::SmoothingCfg::SmoothingCfg(bool pause, int64_t settlingTime, int updateInterval, SmoothingType type, double outputRate, double interpolationRate, unsigned outputDelay, bool dithering, double decay) :
+LinearColorSmoothing::SmoothingCfg::SmoothingCfg(bool pause, int64_t settlingTime, int updateInterval, SmoothingType type, double interpolationRate, unsigned outputDelay, bool dithering, double decay) :
 	  _pause(pause),
 	  _settlingTime(settlingTime),
 	  _updateInterval(updateInterval),
 	  _type(type),
-	  _outputRate(outputRate),
 	  _interpolationRate(interpolationRate),
 	  _outputDelay(outputDelay),
 	  _dithering(dithering),
 	  _decay(decay)
 {
 }
-
 
 QString LinearColorSmoothing::SmoothingCfg::EnumToString(SmoothingType type)
 {

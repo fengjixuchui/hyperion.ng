@@ -21,10 +21,24 @@
 #include <hyperion/GrabberWrapper.h>
 #include <grabber/QtGrabber.h>
 
+#include <utils/WeakConnect.h>
+
 #if defined(ENABLE_MF)
 	#include <grabber/MFGrabber.h>
 #elif defined(ENABLE_V4L2)
 	#include <grabber/V4L2Grabber.h>
+#endif
+
+#if defined(ENABLE_AUDIO)
+	#include <grabber/AudioGrabber.h>
+
+	#ifdef WIN32
+		#include <grabber/AudioGrabberWindows.h>
+	#endif
+
+	#ifdef __linux__
+		#include <grabber/AudioGrabberLinux.h>
+	#endif
 #endif
 
 #if defined(ENABLE_X11)
@@ -120,6 +134,12 @@ void JsonAPI::initialize()
 		_jsonCB->setSubscriptionsTo(_hyperion);
 		connect(this, &JsonAPI::forwardJsonMessage, _hyperion, &Hyperion::forwardJsonMessage);
 	}
+
+	//notify instance manager on suspend/resume/idle requests
+	connect(this, &JsonAPI::suspendAll, _instanceManager, &HyperionIManager::triggerSuspend);
+	connect(this, &JsonAPI::toggleSuspendAll, _instanceManager, &HyperionIManager::triggerToggleSuspend);
+	connect(this, &JsonAPI::idleAll, _instanceManager, &HyperionIManager::triggerIdle);
+	connect(this, &JsonAPI::toggleIdleAll, _instanceManager, &HyperionIManager::triggerToggleIdle);
 }
 
 bool JsonAPI::handleInstanceSwitch(quint8 inst, bool forced)
@@ -138,7 +158,6 @@ void JsonAPI::handleMessage(const QString &messageString, const QString &httpAut
 {
 	const QString ident = "JsonRpc@" + _peerAddress;
 	QJsonObject message;
-	//std::cout << "JsonAPI::handleMessage | [" << static_cast<int>(_hyperion->getInstanceIndex()) << "] Received: ["<< messageString.toStdString() << "]" << std::endl;
 
 	// parse the message
 	if (!JsonUtils::parse(ident, messageString, message, _log))
@@ -236,6 +255,8 @@ proceed:
 		handleInputSourceCommand(message, command, tan);
 	else if (command == "service")
 		handleServiceCommand(message, command, tan);
+	else if (command == "system")
+		handleSystemCommand(message, command, tan);
 
 	// BEGIN | The following commands are deprecated but used to ensure backward compatibility with hyperion Classic remote control
 	else if (command == "clearall")
@@ -545,27 +566,7 @@ void JsonAPI::handleServerInfoCommand(const QJsonObject &message, const QString 
 	info["ledDevices"] = ledDevices;
 
 	QJsonObject grabbers;
-
-	// *** Deprecated ***
-	//QJsonArray availableGrabbers;
-	//if ( GrabberWrapper::getInstance() != nullptr )
-	//{
-	//	QStringList activeGrabbers = GrabberWrapper::getInstance()->getActive(_hyperion->getInstanceIndex());
-	//	QJsonArray activeGrabberNames;
-	//	for (auto grabberName : activeGrabbers)
-	//	{
-	//		activeGrabberNames.append(grabberName);
-	//	}
-
-	//	grabbers["active"] = activeGrabberNames;
-	//}
-	//for (auto grabber : GrabberWrapper::availableGrabbers(GrabberTypeFilter::ALL))
-	//{
-	//	availableGrabbers.append(grabber);
-	//}
-
-	//grabbers["available"] = availableGrabbers;
-
+	// SCREEN
 	QJsonObject screenGrabbers;
 	if (GrabberWrapper::getInstance() != nullptr)
 	{
@@ -585,6 +586,7 @@ void JsonAPI::handleServerInfoCommand(const QJsonObject &message, const QString 
 	}
 	screenGrabbers["available"] = availableScreenGrabbers;
 
+	// VIDEO
 	QJsonObject videoGrabbers;
 	if (GrabberWrapper::getInstance() != nullptr)
 	{
@@ -604,8 +606,31 @@ void JsonAPI::handleServerInfoCommand(const QJsonObject &message, const QString 
 	}
 	videoGrabbers["available"] = availableVideoGrabbers;
 
+	// AUDIO
+	QJsonObject audioGrabbers;
+	if (GrabberWrapper::getInstance() != nullptr)
+	{
+		QStringList activeGrabbers = GrabberWrapper::getInstance()->getActive(_hyperion->getInstanceIndex(), GrabberTypeFilter::AUDIO);
+
+		QJsonArray activeGrabberNames;
+		for (auto grabberName : activeGrabbers)
+		{
+			activeGrabberNames.append(grabberName);
+		}
+
+		audioGrabbers["active"] = activeGrabberNames;
+	}
+	QJsonArray availableAudioGrabbers;
+	for (auto grabber : GrabberWrapper::availableGrabbers(GrabberTypeFilter::AUDIO))
+	{
+		availableAudioGrabbers.append(grabber);
+	}
+	audioGrabbers["available"] = availableAudioGrabbers;
+
 	grabbers.insert("screen", screenGrabbers);
 	grabbers.insert("video", videoGrabbers);
+	grabbers.insert("audio", audioGrabbers);
+
 	info["grabbers"] = grabbers;
 
 	info["videomode"] = QString(videoMode2String(_hyperion->getCurrentVideoMode()));
@@ -679,7 +704,6 @@ void JsonAPI::handleServerInfoCommand(const QJsonObject &message, const QString 
 		QJsonObject obj;
 		obj.insert("friendly_name", entry["friendly_name"].toString());
 		obj.insert("instance", entry["instance"].toInt());
-		//obj.insert("last_use", entry["last_use"].toString());
 		obj.insert("running", entry["running"].toBool());
 		instanceInfo.append(obj);
 	}
@@ -688,7 +712,7 @@ void JsonAPI::handleServerInfoCommand(const QJsonObject &message, const QString 
 	// add leds configs
 	info["leds"] = _hyperion->getSetting(settings::LEDS).array();
 
-	// BEGIN | The following entries are derecated but used to ensure backward compatibility with hyperion Classic remote control
+	// BEGIN | The following entries are deprecated but used to ensure backward compatibility with hyperion Classic remote control
 	// TODO Output the real transformation information instead of default
 
 	// HOST NAME
@@ -749,7 +773,6 @@ void JsonAPI::handleServerInfoCommand(const QJsonObject &message, const QString 
 	const Hyperion::InputInfo &priorityInfo = _hyperion->getPriorityInfo(_hyperion->getCurrentPriority());
 	if (priorityInfo.componentId == hyperion::COMP_COLOR && !priorityInfo.ledColors.empty())
 	{
-		QJsonObject LEDcolor;
 		// check if LED Color not Black (0,0,0)
 		if ((priorityInfo.ledColors.begin()->red +
 				 priorityInfo.ledColors.begin()->green +
@@ -920,15 +943,15 @@ void JsonAPI::handleAdjustmentCommand(const QJsonObject &message, const QString 
 		colorAdjustment->_rgbTransform.setBrightnessCompensation(adjustment["brightnessCompensation"].toInt());
 	}
 
-    if (adjustment.contains("saturationGain"))
-    {
-        colorAdjustment->_okhsvTransform.setSaturationGain(adjustment["saturationGain"].toDouble());
-    }
+	if (adjustment.contains("saturationGain"))
+	{
+		colorAdjustment->_okhsvTransform.setSaturationGain(adjustment["saturationGain"].toDouble());
+	}
 
 	if (adjustment.contains("brightnessGain"))
-    {
+	{
 		colorAdjustment->_okhsvTransform.setBrightnessGain(adjustment["brightnessGain"].toDouble());
-    }
+	}
 
 	// commit the changes
 	_hyperion->adjustmentsUpdated();
@@ -990,7 +1013,7 @@ void JsonAPI::handleConfigCommand(const QJsonObject &message, const QString &com
 		{
 			Debug(_log, "Restarting due to RPC command");
 
-			Process::restartHyperion();
+			Process::restartHyperion(10);
 
 			sendSuccessReply(command + "-" + subcommand, tan);
 		}
@@ -1301,8 +1324,8 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 		// use comment
 		// for user authorized sessions
 		AuthManager::AuthDefinition def;
-		const QString res = API::createToken(comment, def);
-		if (res.isEmpty())
+		const QString createTokenResult = API::createToken(comment, def);
+		if (createTokenResult.isEmpty())
 		{
 			QJsonObject newTok;
 			newTok["comment"] = def.comment;
@@ -1312,7 +1335,7 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 			sendSuccessDataReply(QJsonDocument(newTok), command + "-" + subc, tan);
 			return;
 		}
-		sendErrorReply(res, command + "-" + subc, tan);
+		sendErrorReply(createTokenResult, command + "-" + subc, tan);
 		return;
 	}
 
@@ -1320,13 +1343,13 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 	if (subc == "renameToken")
 	{
 		// use id/comment
-		const QString res = API::renameToken(id, comment);
-		if (res.isEmpty())
+		const QString renameTokenResult = API::renameToken(id, comment);
+		if (renameTokenResult.isEmpty())
 		{
 			sendSuccessReply(command + "-" + subc, tan);
 			return;
 		}
-		sendErrorReply(res, command + "-" + subc, tan);
+		sendErrorReply(renameTokenResult, command + "-" + subc, tan);
 		return;
 	}
 
@@ -1334,13 +1357,13 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 	if (subc == "deleteToken")
 	{
 		// use id
-		const QString res = API::deleteToken(id);
-		if (res.isEmpty())
+		const QString deleteTokenResult = API::deleteToken(id);
+		if (deleteTokenResult.isEmpty())
 		{
 			sendSuccessReply(command + "-" + subc, tan);
 			return;
 		}
-		sendErrorReply(res, command + "-" + subc, tan);
+		sendErrorReply(deleteTokenResult, command + "-" + subc, tan);
 		return;
 	}
 
@@ -1348,7 +1371,6 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 	if (subc == "requestToken")
 	{
 		// use id/comment
-		const QString &comment = message["comment"].toString().trimmed();
 		const bool &acc = message["accept"].toBool(true);
 		if (acc)
 			API::setNewTokenRequest(comment, id, tan);
@@ -1365,7 +1387,7 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 		if (API::getPendingTokenRequests(vec))
 		{
 			QJsonArray arr;
-			for (const auto &entry : vec)
+			for (const auto &entry : qAsConst(vec))
 			{
 				QJsonObject obj;
 				obj["comment"] = entry.comment;
@@ -1425,7 +1447,7 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 		if (!token.isEmpty())
 		{
 			// userToken is longer
-			if (token.count() > 36)
+			if (token.size() > 36)
 			{
 				if (API::isUserTokenAuthorized(token))
 					sendSuccessReply(command + "-" + subc, tan);
@@ -1435,7 +1457,7 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 				return;
 			}
 			// usual app token is 36
-			if (token.count() == 36)
+			if (token.size() == 36)
 			{
 				if (API::isTokenAuthorized(token))
 				{
@@ -1449,7 +1471,7 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 
 		// password
 		// use password
-		if (password.count() >= 8)
+		if (password.size() >= 8)
 		{
 			QString userTokenRep;
 			if (API::isUserAuthorized(password) && API::getUserToken(userTokenRep))
@@ -1470,7 +1492,7 @@ void JsonAPI::handleAuthorizeCommand(const QJsonObject &message, const QString &
 void JsonAPI::handleInstanceCommand(const QJsonObject &message, const QString &command, int tan)
 {
 	const QString &subc = message["subcommand"].toString();
-	const quint8 &inst = message["instance"].toInt();
+	const quint8 &inst = static_cast<quint8>(message["instance"].toInt());
 	const QString &name = message["name"].toString();
 
 	if (subc == "switchTo")
@@ -1488,7 +1510,12 @@ void JsonAPI::handleInstanceCommand(const QJsonObject &message, const QString &c
 
 	if (subc == "startInstance")
 	{
-		connect(this, &API::onStartInstanceResponse, [=] (const int &tan) { sendSuccessReply(command + "-" + subc, tan); });
+		//Only send update once
+		weakConnect(this, &API::onStartInstanceResponse, [this, command, subc] (int tan)
+		{
+			sendSuccessReply(command + "-" + subc, tan);
+		});
+
 		if (!API::startInstance(inst, tan))
 			sendErrorReply("Can't start Hyperion instance index " + QString::number(inst), command + "-" + subc, tan);
 
@@ -1548,12 +1575,8 @@ void JsonAPI::handleLedDeviceCommand(const QJsonObject &message, const QString &
 	QString full_command = command + "-" + subc;
 
 	// TODO: Validate that device type is a valid one
-/*	if ( ! valid type )
+
 	{
-		sendErrorReply("Unknown device", full_command, tan);
-	}
-	else
-*/	{
 		QJsonObject config;
 		config.insert("type", devType);
 		LedDevice* ledDevice = nullptr;
@@ -1615,17 +1638,13 @@ void JsonAPI::handleInputSourceCommand(const QJsonObject& message, const QString
 	QString full_command = command + "-" + subc;
 
 	// TODO: Validate that source type is a valid one
-/*	if ( ! valid type )
 	{
-		sendErrorReply("Unknown device", full_command, tan);
-	}
-	else
-*/ {
 		if (subc == "discover")
 		{
 			QJsonObject inputSourcesDiscovered;
 			inputSourcesDiscovered.insert("sourceType", sourceType);
 			QJsonArray videoInputs;
+			QJsonArray audioInputs;
 
 #if defined(ENABLE_V4L2) || defined(ENABLE_MF)
 
@@ -1638,6 +1657,24 @@ void JsonAPI::handleInputSourceCommand(const QJsonObject& message, const QString
 #endif
 				QJsonObject params;
 				videoInputs = grabber->discover(params);
+				delete grabber;
+			}
+			else
+#endif
+
+#if defined(ENABLE_AUDIO)
+			if (sourceType == "audio")
+			{
+				AudioGrabber* grabber;
+#ifdef WIN32
+				grabber = new AudioGrabberWindows();
+#endif
+
+#ifdef __linux__
+				grabber = new AudioGrabberLinux();
+#endif
+				QJsonObject params;
+				audioInputs = grabber->discover(params);
 				delete grabber;
 			}
 			else
@@ -1738,6 +1775,7 @@ void JsonAPI::handleInputSourceCommand(const QJsonObject& message, const QString
 
 			}
 			inputSourcesDiscovered["video_sources"] = videoInputs;
+			inputSourcesDiscovered["audio_sources"] = audioInputs;
 
 			DebugIf(verbose, _log, "response: [%s]", QString(QJsonDocument(inputSourcesDiscovered).toJson(QJsonDocument::Compact)).toUtf8().constData());
 
@@ -1799,6 +1837,49 @@ void JsonAPI::handleServiceCommand(const QJsonObject &message, const QString &co
 	}
 }
 
+void JsonAPI::handleSystemCommand(const QJsonObject &message, const QString &command, int tan)
+{
+	DebugIf(verbose, _log, "message: [%s]", QString(QJsonDocument(message).toJson(QJsonDocument::Compact)).toUtf8().constData());
+
+	const QString &subc = message["subcommand"].toString().trimmed();
+
+	if (subc == "suspend")
+	{
+		emit suspendAll(true);
+		sendSuccessReply(command + "-" + subc, tan);
+	}
+	else if (subc == "resume")
+	{
+		emit suspendAll(false);
+		sendSuccessReply(command + "-" + subc, tan);
+	}
+	else if (subc == "restart")
+	{
+		Process::restartHyperion(11);
+		sendSuccessReply(command + "-" + subc, tan);
+	}
+	else if (subc == "toggleSuspend")
+	{
+		emit toggleSuspendAll();
+		sendSuccessReply(command + "-" + subc, tan);
+	}
+	else if (subc == "idle")
+	{
+		emit idleAll(true);
+		sendSuccessReply(command + "-" + subc, tan);
+	}
+	else if (subc == "toggleIdle")
+	{
+		emit toggleIdleAll();
+		sendSuccessReply(command + "-" + subc, tan);
+	}
+	else
+	{
+		QString full_command = command + "-" + subc;
+		sendErrorReply("Unknown or missing subcommand", full_command, tan);
+	}
+}
+
 void JsonAPI::handleNotImplemented(const QString &command, int tan)
 {
 	sendErrorReply("Command not implemented", command, tan);
@@ -1808,6 +1889,7 @@ void JsonAPI::sendSuccessReply(const QString &command, int tan)
 {
 	// create reply
 	QJsonObject reply;
+	reply["instance"] = _hyperion->getInstanceIndex();
 	reply["success"] = true;
 	reply["command"] = command;
 	reply["tan"] = tan;
@@ -1819,6 +1901,7 @@ void JsonAPI::sendSuccessReply(const QString &command, int tan)
 void JsonAPI::sendSuccessDataReply(const QJsonDocument &doc, const QString &command, int tan)
 {
 	QJsonObject reply;
+	reply["instance"] = _hyperion->getInstanceIndex();
 	reply["success"] = true;
 	reply["command"] = command;
 	reply["tan"] = tan;
@@ -1834,6 +1917,7 @@ void JsonAPI::sendErrorReply(const QString &error, const QString &command, int t
 {
 	// create reply
 	QJsonObject reply;
+	reply["instance"] = _hyperion->getInstanceIndex();
 	reply["success"] = false;
 	reply["error"] = error;
 	reply["command"] = command;
@@ -1956,6 +2040,11 @@ void JsonAPI::handleInstanceStateChange(InstanceState state, quint8 instance, co
 			handleInstanceSwitch();
 		}
 		break;
+
+	case InstanceState::H_STARTED:
+	case InstanceState::H_STOPPED:
+	case InstanceState::H_CREATED:
+	case InstanceState::H_DELETED:
 	default:
 		break;
 	}
